@@ -2,11 +2,14 @@
 #include <stdlib.h>
 #include <errno.h>
 
+#include "tablero.h"
+
 // Codigos de retorno del programa
 #define RET_OK         0   // ejecucion correcta
 #define RET_ERROR      1   // error o interrupcion durante la ejecucion
 #define RET_ARGUMENTOS 2   // argumentos o configuracion invalidos
 
+// Muestra la forma correcta de ejecutar el programa
 static void uso(const char *prog) {
     fprintf(stderr, "Uso: %s N M [config.txt]\n", prog);
     fprintf(stderr, "  N: numero total de jugadores (>= 2)\n");
@@ -39,6 +42,17 @@ int main(int argc, char *argv[]) {
            n, m, ruta_config ? ruta_config : "(valores por defecto)");
     if (n % 2 != 0)
         printf("[torneo] Aviso: N es impar, un jugador quedara sin pareja.\n");
+
+    // Se muestra el tablero con la disposicion inicial
+    Tablero tablero;
+    Pos puma, perros[NUM_PERROS];
+    tablero_disposicion_defecto(&puma, perros);
+    if (!tablero_inicializar(&tablero, puma, perros)) {
+        fprintf(stderr, "Disposicion inicial invalida\n");
+        return RET_ERROR;
+    }
+    printf("[torneo] Tablero inicial:\n");
+    tablero_imprimir(&tablero, stdout);
 
     return RET_OK;
 }
