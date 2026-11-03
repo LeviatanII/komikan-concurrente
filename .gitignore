@@ -1,0 +1,6 @@
+# Ejecutable y objetos
+torneo
+*.o
+
+# Logs generados en ejecución
+*.log
