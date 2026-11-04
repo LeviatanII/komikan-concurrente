@@ -42,7 +42,7 @@ typedef struct {
 typedef struct {
     Casilla casilla[FILAS][COLUMNAS];
     Pos     puma;                     // posicion actual del puma
-    Pos     perros[NUM_PERROS];       // posición actual de cada perro */
+    Pos     perros[NUM_PERROS];       // posicion actual de cada perro
     bool    perro_vivo[NUM_PERROS];   // false si el perro fue capturado
     int     capturados;               // perros capturados por el puma
 } Tablero;

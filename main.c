@@ -3,6 +3,7 @@
 #include <errno.h>
 
 #include "tablero.h"
+#include "config.h"
 
 // Codigos de retorno del programa
 #define RET_OK         0   // ejecucion correcta
@@ -43,11 +44,16 @@ int main(int argc, char *argv[]) {
     if (n % 2 != 0)
         printf("[torneo] Aviso: N es impar, un jugador quedara sin pareja.\n");
 
+    // Se cargan los valores por defecto y luego el archivo, si se indico
+    Config config;
+    config_defecto(&config);
+    if (ruta_config != NULL && !config_cargar(ruta_config, &config))
+        return RET_ARGUMENTOS;
+    config_mostrar(&config);
+
     // Se muestra el tablero con la disposicion inicial
     Tablero tablero;
-    Pos puma, perros[NUM_PERROS];
-    tablero_disposicion_defecto(&puma, perros);
-    if (!tablero_inicializar(&tablero, puma, perros)) {
+    if (!tablero_inicializar(&tablero, config.puma, config.perros)) {
         fprintf(stderr, "Disposicion inicial invalida\n");
         return RET_ERROR;
     }

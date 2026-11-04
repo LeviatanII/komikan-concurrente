@@ -10,14 +10,14 @@ El Komikan enfrenta a un Puma contra 12 Perros en un tablero de 5 × 5 intersecc
 
 El programa recibe la cantidad de jugadores que llegan al servidor y la cantidad máxima de mesas que pueden estar activas al mismo tiempo.
 
-Actualmente el programa valida los argumentos de entrada, construye el tablero con la disposición inicial de las fichas y lo muestra en pantalla. El emparejamiento, las mesas y la simulación concurrente de las partidas se incorporan en las siguientes etapas.
+Actualmente el programa valida los argumentos de entrada, lee el archivo de configuración opcional, construye el tablero con la disposición inicial de las fichas y lo muestra en pantalla. El emparejamiento, las mesas y la simulación concurrente de las partidas se incorporan en las siguientes etapas.
 
 ## Compilación
 
 Desde la carpeta del proyecto, ejecutar:
 
 ```
-gcc -Wall -Wextra -std=c17 -pthread main.c tablero.c -o torneo
+gcc -Wall -Wextra -std=c17 -pthread main.c tablero.c config.c -o torneo
 ```
 
 Se utilizan exactamente las opciones de compilación indicadas en la pauta.
@@ -27,26 +27,74 @@ Se utilizan exactamente las opciones de compilación indicadas en la pauta.
 Ejecutar indicando la cantidad de jugadores, el límite de mesas y, opcionalmente, un archivo de configuración:
 
 ```
-./torneo 4 2
+./torneo 4 2 config.txt
 ```
 
-En este ejemplo llegan 4 jugadores al servidor y se permiten como máximo 2 mesas activas simultáneamente.
+En este ejemplo llegan 4 jugadores al servidor, se permiten como máximo 2 mesas activas simultáneamente y se utiliza la configuración de config.txt.
+
+Si no se indica un archivo de configuración, se utilizan los valores por defecto.
 
 N debe ser un entero mayor o igual a 2 y M un entero mayor o igual a 1. Si N es impar, un jugador queda sin pareja y se informa con un aviso.
 
-Por ahora, el programa muestra el tablero con la disposición inicial de las fichas.
+Por ahora, el programa muestra la configuración utilizada y el tablero con la disposición inicial de las fichas.
+
+## Formato del archivo de configuración
+
+Cada línea contiene una clave y su valor separados por el signo igual:
+
+```
+clave = valor
+```
+
+Las claves aceptadas son las siguientes.
+
+retardo_min y retardo_max indican, en milisegundos, el retardo mínimo y máximo entre dos movimientos de una misma ficha. Deben ser enteros no negativos y retardo_min no puede ser mayor que retardo_max. Por defecto son 50 y 300.
+
+semilla indica la semilla aleatoria. Permite repetir una ejecución con los mismos valores aleatorios. Debe ser un entero entre 0 e INT_MAX. Si no se indica, se utiliza la hora actual y se muestra al iniciar el programa.
+
+puma indica la posición inicial del puma con el formato fila,col.
+
+perros indica las posiciones iniciales de los 12 perros con el formato fila,col, separadas por espacios.
+
+Las posiciones utilizan las filas y columnas de la matriz descrita en la sección Representación del tablero y deben corresponder a nodos reales.
+
+Todas las claves son opcionales. Las que no aparecen conservan su valor por defecto.
+
+Se permiten líneas vacías y comentarios que comiencen con el carácter numeral.
+
+Se rechazan claves desconocidas o repetidas, líneas sin signo igual, valores no numéricos o con caracteres sobrantes, posiciones que no son nodos, una cantidad de perros distinta de 12, fichas repetidas en la misma posición y líneas de más de 511 caracteres. El mensaje de error indica el archivo y el número de línea.
+
+El archivo config.txt contiene un ejemplo con la disposición por defecto:
+
+```
+retardo_min = 50
+retardo_max = 300
+semilla = 42
+puma = 0,2
+perros = 5,0 5,1 5,2 5,3 5,4 6,0 6,1 6,2 6,3 6,4 4,0 4,4
+```
 
 ## Organización del código
 
-main.c contiene el punto de entrada del programa. Valida los argumentos, inicializa el tablero y lo muestra.
+main.c contiene el punto de entrada del programa. Valida los argumentos, carga la configuración, inicializa el tablero y lo muestra.
 
 tablero.c y tablero.h definen el tablero, las piezas y las reglas del juego. Implementan las conexiones entre nodos, los movimientos válidos, las capturas del puma y la impresión de la matriz de juego.
+
+config.c y config.h definen los parámetros del torneo. Implementan los valores por defecto y la lectura y validación del archivo de configuración.
+
+config.txt contiene una configuración de ejemplo.
 
 ## Funciones implementadas
 
 uso(): muestra la forma correcta de invocar el programa.
 
 parsear_entero(): convierte un argumento a entero mediante strtol() y rechaza valores vacíos, no numéricos, con caracteres sobrantes, fuera de rango o no positivos.
+
+config_defecto(): asigna los retardos por defecto, una semilla basada en la hora actual y la disposición inicial por defecto.
+
+config_cargar(): lee el archivo línea por línea, valida cada clave y su valor, y comprueba que los retardos sean coherentes y que no existan fichas repetidas.
+
+config_mostrar(): muestra los retardos y la semilla utilizados.
 
 tablero_disposicion_defecto(): entrega la disposición inicial por defecto del puma y los 12 perros.
 
@@ -105,4 +153,4 @@ La disposición inicial por defecto ubica al puma en el vértice del triángulo 
 
 1 indica que hubo un error o una interrupción durante la ejecución.
 
-2 indica que los argumentos son inválidos.
+2 indica que los argumentos o el archivo de configuración son inválidos.
