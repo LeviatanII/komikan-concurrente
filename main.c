@@ -4,6 +4,7 @@
 
 #include "tablero.h"
 #include "config.h"
+#include "partida.h"
 
 // Codigos de retorno del programa
 #define RET_OK         0   // ejecucion correcta
@@ -51,14 +52,10 @@ int main(int argc, char *argv[]) {
         return RET_ARGUMENTOS;
     config_mostrar(&config);
 
-    // Se muestra el tablero con la disposicion inicial
-    Tablero tablero;
-    if (!tablero_inicializar(&tablero, config.puma, config.perros)) {
-        fprintf(stderr, "Disposicion inicial invalida\n");
+    // Por ahora se juega una sola partida en la mesa 0
+    Resultado resultado = partida_jugar(0, &config);
+    if (resultado == SIN_GANADOR)
         return RET_ERROR;
-    }
-    printf("[torneo] Tablero inicial:\n");
-    tablero_imprimir(&tablero, stdout);
 
     return RET_OK;
 }

@@ -10,14 +10,16 @@ El Komikan enfrenta a un Puma contra 12 Perros en un tablero de 5 × 5 intersecc
 
 El programa recibe la cantidad de jugadores que llegan al servidor y la cantidad máxima de mesas que pueden estar activas al mismo tiempo.
 
-Actualmente el programa valida los argumentos de entrada, lee el archivo de configuración opcional, construye el tablero con la disposición inicial de las fichas y lo muestra en pantalla. El emparejamiento, las mesas y la simulación concurrente de las partidas se incorporan en las siguientes etapas.
+Cada partida utiliza 13 hilos: uno para el puma y uno para cada perro. Cada hilo espera un retardo aleatorio, elige un movimiento válido y lo aplica sobre un tablero compartido. Si dos fichas intentan ocupar la misma casilla al mismo tiempo, los mutex del tablero garantizan que solo una lo consiga.
+
+Actualmente el programa valida los argumentos de entrada, lee el archivo de configuración opcional y juega una partida concurrente en una mesa hasta que gana el puma o los perros. El juez de mesa, el emparejamiento de N jugadores y el límite de M mesas se incorporan en las siguientes etapas.
 
 ## Compilación
 
 Desde la carpeta del proyecto, ejecutar:
 
 ```
-gcc -Wall -Wextra -std=c17 -pthread main.c tablero.c config.c -o torneo
+gcc -Wall -Wextra -std=c17 -pthread main.c tablero.c config.c partida.c -o torneo
 ```
 
 Se utilizan exactamente las opciones de compilación indicadas en la pauta.
@@ -36,7 +38,7 @@ Si no se indica un archivo de configuración, se utilizan los valores por defect
 
 N debe ser un entero mayor o igual a 2 y M un entero mayor o igual a 1. Si N es impar, un jugador queda sin pareja y se informa con un aviso.
 
-Por ahora, el programa muestra la configuración utilizada y el tablero con la disposición inicial de las fichas.
+Por ahora, el programa muestra la configuración utilizada y juega una sola partida, mostrando cada movimiento y el tablero inicial y final.
 
 ## Formato del archivo de configuración
 
@@ -76,11 +78,13 @@ perros = 5,0 5,1 5,2 5,3 5,4 6,0 6,1 6,2 6,3 6,4 4,0 4,4
 
 ## Organización del código
 
-main.c contiene el punto de entrada del programa. Valida los argumentos, carga la configuración, inicializa el tablero y lo muestra.
+main.c contiene el punto de entrada del programa. Valida los argumentos, carga la configuración y juega una partida.
 
 tablero.c y tablero.h definen el tablero, las piezas y las reglas del juego. Implementan las conexiones entre nodos, los movimientos válidos, las capturas del puma y la impresión de la matriz de juego.
 
 config.c y config.h definen los parámetros del torneo. Implementan los valores por defecto y la lectura y validación del archivo de configuración.
+
+partida.c y partida.h implementan una partida concurrente. Crean los hilos del puma y los perros, administran los mutex del tablero y la variable de condición que anuncia el fin de la partida, y liberan estos recursos al terminar.
 
 config.txt contiene una configuración de ejemplo.
 
@@ -95,6 +99,22 @@ config_defecto(): asigna los retardos por defecto, una semilla basada en la hora
 config_cargar(): lee el archivo línea por línea, valida cada clave y su valor, y comprueba que los retardos sean coherentes y que no existan fichas repetidas.
 
 config_mostrar(): muestra los retardos y la semilla utilizados.
+
+partida_jugar(): inicializa la partida, crea los 13 hilos, espera que terminen mediante pthread_join(), muestra el resultado y destruye las primitivas de sincronización.
+
+hilo_perro(): ciclo de un perro. Espera un retardo, bloquea su zona del tablero, elige al azar un destino libre y se mueve. Termina cuando la partida finaliza o cuando el perro es capturado.
+
+hilo_puma(): ciclo del puma. Espera un retardo, bloquea su zona del tablero y se mueve, prefiriendo una captura si existe. Anuncia la victoria del puma al llegar a 6 capturas y la de los perros si no tiene movimientos válidos.
+
+calcular_zona(): obtiene las casillas a distancia 1 (perro) o 2 (puma) de una posición, ordenadas por índice.
+
+bloquear_zona() y desbloquear_zona(): toman los mutex de una zona en orden ascendente y los liberan en orden inverso.
+
+esperar_retardo(): espera un tiempo aleatorio entre retardo_min y retardo_max mediante pthread_cond_timedwait(). Retorna antes si la partida termina.
+
+registrar_movimiento(): cuenta y muestra un movimiento mientras la ficha mantiene bloqueadas sus casillas.
+
+anunciar_fin(): marca la partida como terminada, guarda el resultado y despierta a todas las fichas mediante pthread_cond_broadcast().
 
 tablero_disposicion_defecto(): entrega la disposición inicial por defecto del puma y los 12 perros.
 
@@ -147,10 +167,48 @@ El puma gana al capturar 6 perros. Los perros ganan cuando el puma no tiene movi
 
 La disposición inicial por defecto ubica al puma en el vértice del triángulo y a los perros en las filas 5 y 6 junto con las esquinas de la fila 4. En la matriz impresa, P representa al puma, o a un perro y el punto a un nodo vacío.
 
+## Sincronización del tablero
+
+Cada casilla del tablero tiene su propio pthread_mutex_t. Antes de decidir un movimiento, una ficha bloquea su zona: las casillas que necesita leer y modificar. La zona de un perro contiene su casilla y las adyacentes. La zona del puma alcanza distancia 2, porque una captura involucra la casilla del perro saltado y la casilla de destino.
+
+Mientras mantiene su zona bloqueada, la ficha calcula los movimientos válidos, elige uno y lo aplica. Como la decisión y el movimiento ocurren dentro de la misma sección crítica, ninguna otra ficha puede ocupar el destino entre ambos pasos.
+
+Si dos fichas compiten por la misma casilla libre, esa casilla pertenece a las zonas de ambas. La primera que obtiene su mutex realiza el movimiento. La segunda, al obtenerlo, ve la casilla ocupada y elige otro destino.
+
+Cuando el puma captura a un perro, la casilla de ese perro forma parte de la zona del puma. Por eso el hilo del perro no puede moverse durante la captura. Al bloquear su siguiente zona, el perro comprueba que sigue en juego y, si fue capturado, su hilo termina.
+
+La posición de cada ficha solo la modifica su propio hilo. Por eso cada hilo puede leer su posición antes de bloquear la zona.
+
+El estado general de la partida (si terminó, el resultado y la cantidad de movimientos) se protege con un mutex adicional.
+
+## Prevención de deadlock
+
+Todos los hilos bloquean las casillas en orden ascendente de índice (fila × 5 + columna) y toman el mutex del estado al final. Como todos siguen el mismo orden global, no puede formarse una espera circular y por lo tanto no existe deadlock.
+
+Los mutex se liberan en orden inverso al que se tomaron.
+
+## Espera sin busy-waiting
+
+Los retardos entre movimientos se realizan con pthread_cond_timedwait() sobre la variable de condición de fin de partida. Mientras espera, el hilo no consume CPU y libera el mutex del estado.
+
+Cuando la partida termina, pthread_cond_broadcast() despierta inmediatamente a todas las fichas, sin esperar a que se cumplan sus retardos. Las esperas se repiten en un ciclo para tolerar despertares espurios.
+
+## Mensajes de salida
+
+Comienza la partida: indica el inicio de la partida en una mesa y muestra el tablero inicial.
+
+ficha: (fila,col) -> (fila,col): indica un movimiento. Si el puma captura, se agrega el perro capturado.
+
+Fin de la partida: indica la cantidad total de movimientos y muestra el tablero final.
+
+Gana el puma o Ganan los perros: indica el resultado.
+
+Los movimientos se muestran mientras la ficha mantiene bloqueadas sus casillas. Así, el orden de los mensajes coincide con el orden real en que se aplicaron sobre el tablero.
+
 ## Códigos de retorno
 
 0 indica que la ejecución terminó correctamente.
 
-1 indica que hubo un error o una interrupción durante la ejecución.
+1 indica que hubo un error o una interrupción durante la ejecución, por ejemplo si no se pudieron crear los hilos.
 
 2 indica que los argumentos o el archivo de configuración son inválidos.
