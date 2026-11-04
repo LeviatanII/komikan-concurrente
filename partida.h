@@ -3,6 +3,7 @@
 
 #include <pthread.h>
 #include <stdbool.h>
+#include <stdio.h>
 
 #include "tablero.h"
 #include "config.h"
@@ -30,25 +31,47 @@ typedef struct {
 
 struct Partida {
     int             id_mesa;
+    int             id_partida;
     const Config   *config;
     Tablero         tablero;
+    FILE           *registro;   // archivo de log de la partida
 
     // Orden de bloqueo: primero las casillas en orden ascendente y al final mutex_estado
     // Un mutex por casilla. Una ficha bloquea las casillas que lee o modifica
     pthread_mutex_t mutex_casilla[FILAS][COLUMNAS];
 
-    // Protege terminada, resultado y movimientos
+    // Protege terminada, resultado, movimientos, eventos y el archivo de log
     pthread_mutex_t mutex_estado;
-    pthread_cond_t  cond_fin;   // despierta a las fichas cuando la partida termina
+    pthread_cond_t  cond_fin;     // despierta a las fichas cuando la partida termina
+    pthread_cond_t  cond_juez;    // despierta al juez cuando ocurre un evento
     bool            terminada;
     Resultado       resultado;
     int             movimientos;
+    int             eventos;      // movimientos y avisos que el juez debe revisar
 
     Ficha           fichas[NUM_FICHAS];
     pthread_t       hilos[NUM_FICHAS];
 };
 
-// Juega una partida completa en la mesa indicada y retorna el resultado
-Resultado partida_jugar(int id_mesa, const Config *cfg);
+// Inicializa el tablero, abre el log y crea las primitivas de sincronizacion
+bool partida_inicializar(Partida *p, int id_mesa, int id_partida, const Config *cfg);
+
+// Cierra el log y destruye las primitivas de sincronizacion
+void partida_destruir(Partida *p);
+
+// Crea los hilos de las fichas y retorna cuantos se crearon
+int partida_crear_fichas(Partida *p);
+
+// Espera que terminen los hilos de las fichas creadas
+void partida_esperar_fichas(Partida *p, int creados);
+
+// Bloquea todas las casillas en orden ascendente y luego mutex_estado
+void partida_bloquear_todo(Partida *p);
+
+// Libera mutex_estado y todas las casillas
+void partida_desbloquear_todo(Partida *p);
+
+// Marca la partida como terminada y despierta a todas las fichas. Se llama con mutex_estado tomado
+void partida_anunciar_fin(Partida *p, Resultado r);
 
 #endif

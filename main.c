@@ -1,10 +1,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
+#include <string.h>
+#include <pthread.h>
 
 #include "tablero.h"
 #include "config.h"
 #include "partida.h"
+#include "juez.h"
 
 // Codigos de retorno del programa
 #define RET_OK         0   // ejecucion correcta
@@ -52,9 +55,16 @@ int main(int argc, char *argv[]) {
         return RET_ARGUMENTOS;
     config_mostrar(&config);
 
-    // Por ahora se juega una sola partida en la mesa 0
-    Resultado resultado = partida_jugar(0, &config);
-    if (resultado == SIN_GANADOR)
+    // Por ahora se juega una sola partida, dirigida por el hilo juez de la mesa 0
+    DatosJuez juez = {0, 1, &config, SIN_GANADOR};
+    pthread_t hilo;
+    int err = pthread_create(&hilo, NULL, hilo_juez, &juez);
+    if (err != 0) {
+        fprintf(stderr, "No se pudo crear el juez: %s\n", strerror(err));
+        return RET_ERROR;
+    }
+    pthread_join(hilo, NULL);
+    if (juez.resultado == SIN_GANADOR)
         return RET_ERROR;
 
     return RET_OK;

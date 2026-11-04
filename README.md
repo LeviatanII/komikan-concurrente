@@ -12,14 +12,16 @@ El programa recibe la cantidad de jugadores que llegan al servidor y la cantidad
 
 Cada partida utiliza 13 hilos: uno para el puma y uno para cada perro. Cada hilo espera un retardo aleatorio, elige un movimiento válido y lo aplica sobre un tablero compartido. Si dos fichas intentan ocupar la misma casilla al mismo tiempo, los mutex del tablero garantizan que solo una lo consiga.
 
-Actualmente el programa valida los argumentos de entrada, lee el archivo de configuración opcional y juega una partida concurrente en una mesa hasta que gana el puma o los perros. El juez de mesa, el emparejamiento de N jugadores y el límite de M mesas se incorporan en las siguientes etapas.
+Cada mesa tiene un hilo juez independiente. El juez inicializa el tablero y sus primitivas de sincronización, crea los hilos de las fichas, revisa el tablero tras cada movimiento, registra la partida en un archivo de log, detecta la victoria y libera los recursos al terminar.
+
+Actualmente el programa valida los argumentos de entrada, lee el archivo de configuración opcional y juega una partida en una mesa, dirigida por su juez. El emparejamiento de N jugadores y el límite de M mesas se incorporan en las siguientes etapas.
 
 ## Compilación
 
 Desde la carpeta del proyecto, ejecutar:
 
 ```
-gcc -Wall -Wextra -std=c17 -pthread main.c tablero.c config.c partida.c -o torneo
+gcc -Wall -Wextra -std=c17 -pthread main.c tablero.c config.c partida.c juez.c -o torneo
 ```
 
 Se utilizan exactamente las opciones de compilación indicadas en la pauta.
@@ -38,7 +40,7 @@ Si no se indica un archivo de configuración, se utilizan los valores por defect
 
 N debe ser un entero mayor o igual a 2 y M un entero mayor o igual a 1. Si N es impar, un jugador queda sin pareja y se informa con un aviso.
 
-Por ahora, el programa muestra la configuración utilizada y juega una sola partida, mostrando cada movimiento y el tablero inicial y final.
+Por ahora, el programa muestra la configuración utilizada y juega una sola partida. En la consola se muestran el inicio, las capturas y el resultado. El detalle de cada movimiento y el tablero actualizado se escriben en el archivo partida_1.log.
 
 ## Formato del archivo de configuración
 
@@ -78,13 +80,15 @@ perros = 5,0 5,1 5,2 5,3 5,4 6,0 6,1 6,2 6,3 6,4 4,0 4,4
 
 ## Organización del código
 
-main.c contiene el punto de entrada del programa. Valida los argumentos, carga la configuración y juega una partida.
+main.c contiene el punto de entrada del programa. Valida los argumentos, carga la configuración y crea el hilo juez de la mesa.
 
 tablero.c y tablero.h definen el tablero, las piezas y las reglas del juego. Implementan las conexiones entre nodos, los movimientos válidos, las capturas del puma y la impresión de la matriz de juego.
 
 config.c y config.h definen los parámetros del torneo. Implementan los valores por defecto y la lectura y validación del archivo de configuración.
 
-partida.c y partida.h implementan una partida concurrente. Crean los hilos del puma y los perros, administran los mutex del tablero y la variable de condición que anuncia el fin de la partida, y liberan estos recursos al terminar.
+partida.c y partida.h implementan la partida concurrente. Definen el estado compartido de una mesa, los hilos del puma y los perros, las zonas de bloqueo y las esperas entre movimientos.
+
+juez.c y juez.h implementan el hilo juez de cada mesa: inicialización, revisión del tablero, log, detección de victoria y liberación de recursos.
 
 config.txt contiene una configuración de ejemplo.
 
@@ -100,11 +104,29 @@ config_cargar(): lee el archivo línea por línea, valida cada clave y su valor,
 
 config_mostrar(): muestra los retardos y la semilla utilizados.
 
-partida_jugar(): inicializa la partida, crea los 13 hilos, espera que terminen mediante pthread_join(), muestra el resultado y destruye las primitivas de sincronización.
+hilo_juez(): hilo juez de una mesa. Inicializa la partida, crea las fichas, espera eventos con pthread_cond_wait(), revisa el tablero tras cada uno, espera a las fichas con pthread_join() y libera los recursos.
+
+revisar_tablero(): bloquea el tablero completo, registra la matriz de juego en el log, verifica su consistencia y revisa las condiciones de victoria.
+
+estado_consistente(): comprueba que exista un solo puma, que cada perro en juego esté en la casilla registrada y que la cantidad de perros coincida con las capturas.
+
+juez_texto_resultado(): entrega el texto que describe un resultado.
+
+partida_inicializar(): inicializa el tablero, abre el archivo de log y crea los mutex y variables de condición de la partida.
+
+partida_destruir(): cierra el log y destruye los mutex y variables de condición.
+
+partida_crear_fichas(): crea los 13 hilos y asigna a cada ficha una semilla propia derivada de la semilla de la configuración.
+
+partida_esperar_fichas(): espera mediante pthread_join() que terminen los hilos creados.
+
+partida_bloquear_todo() y partida_desbloquear_todo(): bloquean y liberan todas las casillas y el mutex del estado respetando el orden global.
+
+partida_anunciar_fin(): marca la partida como terminada, guarda el resultado y despierta a las fichas y al juez.
 
 hilo_perro(): ciclo de un perro. Espera un retardo, bloquea su zona del tablero, elige al azar un destino libre y se mueve. Termina cuando la partida finaliza o cuando el perro es capturado.
 
-hilo_puma(): ciclo del puma. Espera un retardo, bloquea su zona del tablero y se mueve, prefiriendo una captura si existe. Anuncia la victoria del puma al llegar a 6 capturas y la de los perros si no tiene movimientos válidos.
+hilo_puma(): ciclo del puma. Espera un retardo, bloquea su zona del tablero y se mueve, prefiriendo una captura si existe. Si no tiene movimientos válidos, avisa al juez.
 
 calcular_zona(): obtiene las casillas a distancia 1 (perro) o 2 (puma) de una posición, ordenadas por índice.
 
@@ -112,9 +134,13 @@ bloquear_zona() y desbloquear_zona(): toman los mutex de una zona en orden ascen
 
 esperar_retardo(): espera un tiempo aleatorio entre retardo_min y retardo_max mediante pthread_cond_timedwait(). Retorna antes si la partida termina.
 
-registrar_movimiento(): cuenta y muestra un movimiento mientras la ficha mantiene bloqueadas sus casillas.
+partida_activa(): indica si las fichas pueden seguir moviéndose, es decir, si la partida no terminó y el puma no alcanzó las 6 capturas.
 
-anunciar_fin(): marca la partida como terminada, guarda el resultado y despierta a todas las fichas mediante pthread_cond_broadcast().
+avisar_juez(): cuenta un evento y despierta al juez mediante pthread_cond_signal().
+
+registrar_movimiento(): escribe un movimiento en el log y avisa al juez mientras la ficha mantiene bloqueadas sus casillas.
+
+registrar_rechazo(): escribe en el log un movimiento que no cumple las reglas y no se aplica.
 
 tablero_disposicion_defecto(): entrega la disposición inicial por defecto del puma y los 12 perros.
 
@@ -179,15 +205,31 @@ Cuando el puma captura a un perro, la casilla de ese perro forma parte de la zon
 
 La posición de cada ficha solo la modifica su propio hilo. Por eso cada hilo puede leer su posición antes de bloquear la zona.
 
-El estado general de la partida (si terminó, el resultado y la cantidad de movimientos) se protege con un mutex adicional.
+El estado general de la partida (si terminó, el resultado, los contadores y el archivo de log) se protege con un mutex adicional.
+
+## Juez de mesa
+
+Cada mesa tiene un hilo juez. Las fichas no se comunican con el juez directamente: después de cada movimiento incrementan un contador de eventos y lo despiertan con pthread_cond_signal(). El juez duerme en pthread_cond_wait() mientras no existan eventos nuevos.
+
+Al despertar, el juez bloquea todas las casillas y el mutex del estado. Así obtiene una instantánea consistente del tablero completo, en la que ninguna ficha está a mitad de un movimiento. Sobre esa instantánea registra la matriz de juego y revisa las condiciones de victoria.
+
+Todo movimiento se valida dentro de la sección crítica de la ficha mediante las reglas del tablero. Si un movimiento no cumple las reglas de adyacencia o captura, se rechaza y se registra en el log. Además, el juez verifica en cada revisión que el tablero sea consistente. Si detecta una inconsistencia, aborta la partida sin ganador.
+
+El puma gana al capturar 6 perros. Desde ese momento las fichas dejan de moverse, aunque el juez todavía no haya anunciado el resultado.
+
+Los perros ganan cuando, en una revisión del juez, el puma no tiene movimientos válidos. Si el puma intenta moverse y no puede, también avisa al juez para que revise el tablero.
+
+Al detectar la victoria, el juez marca la partida como terminada y despierta a todas las fichas con pthread_cond_broadcast(). Luego espera a los 13 hilos con pthread_join(), cierra el log y destruye los mutex y variables de condición, dejando la mesa libre.
 
 ## Prevención de deadlock
 
-Todos los hilos bloquean las casillas en orden ascendente de índice (fila × 5 + columna) y toman el mutex del estado al final. Como todos siguen el mismo orden global, no puede formarse una espera circular y por lo tanto no existe deadlock.
+Todos los hilos, incluido el juez, bloquean las casillas en orden ascendente de índice (fila × 5 + columna) y toman el mutex del estado al final. Como todos siguen el mismo orden global, no puede formarse una espera circular y por lo tanto no existe deadlock.
 
 Los mutex se liberan en orden inverso al que se tomaron.
 
 ## Espera sin busy-waiting
+
+El juez espera eventos con pthread_cond_wait() y no revisa el tablero mientras no ocurra un movimiento.
 
 Los retardos entre movimientos se realizan con pthread_cond_timedwait() sobre la variable de condición de fin de partida. Mientras espera, el hilo no consume CPU y libera el mutex del estado.
 
@@ -195,15 +237,17 @@ Cuando la partida termina, pthread_cond_broadcast() despierta inmediatamente a t
 
 ## Mensajes de salida
 
-Comienza la partida: indica el inicio de la partida en una mesa y muestra el tablero inicial.
+En la consola se muestran los eventos principales de cada mesa:
 
-ficha: (fila,col) -> (fila,col): indica un movimiento. Si el puma captura, se agrega el perro capturado.
+Comienza la partida: indica el inicio de una partida, la mesa en que se juega y el nombre de su archivo de log.
 
-Fin de la partida: indica la cantidad total de movimientos y muestra el tablero final.
+El puma captura al perro: indica una captura y la cantidad acumulada.
 
-Gana el puma o Ganan los perros: indica el resultado.
+Fin de la partida: indica la cantidad total de movimientos y el resultado.
 
-Los movimientos se muestran mientras la ficha mantiene bloqueadas sus casillas. Así, el orden de los mensajes coincide con el orden real en que se aplicaron sobre el tablero.
+Cada partida genera además el archivo partida_N.log, donde N es el número de la partida. Contiene los movimientos numerados en el orden en que se aplicaron, los movimientos rechazados y la matriz de juego registrada por el juez en cada revisión.
+
+Los movimientos se registran mientras la ficha mantiene bloqueadas sus casillas. Así, el orden del log coincide con el orden real en que se aplicaron sobre el tablero.
 
 ## Códigos de retorno
 
