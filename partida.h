@@ -4,6 +4,7 @@
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <time.h>
 
 #include "tablero.h"
 #include "config.h"
@@ -27,6 +28,9 @@ typedef struct {
     Partida     *partida;
     int          id;        // ID_PUMA para el puma, 0..11 para los perros
     unsigned int semilla;   // semilla propia para rand_r
+    int 	 ciclos;    // Ciclos de desicion realizados (omito comentarios)
+    int		 falla_en;  // Ciclo en que simula la falla, o -1 (Cositas)
+    bool	 activa;    // Indica si el hilo sigue activo y tiene el teclado en espa;ol jejeje no tengo ñ... que?
 } Ficha;
 
 struct Partida {
@@ -48,6 +52,8 @@ struct Partida {
     Resultado       resultado;
     int             movimientos;
     int             eventos;      // movimientos y avisos que el juez debe revisar
+    bool 	    abandono;	  // Epic latin american dad moment
+    bool	    interrumpida; // O abortada
 
     Ficha           fichas[NUM_FICHAS];
     pthread_t       hilos[NUM_FICHAS];
@@ -73,5 +79,18 @@ void partida_desbloquear_todo(Partida *p);
 
 // Marca la partida como terminada y despierta a todas las fichas. Se llama con mutex_estado tomado
 void partida_anunciar_fin(Partida *p, Resultado r);
+
+// ABORTA la partida por cierre del servers
+void partida_interrumpir(Partida *p);
+
+// Cuenta los mutex que esta bloqueados
+int partida_mutex_retenidos(Partida *p);
+
+// Contador de mutex que estan bloqueados despues de unir las hilachas
+int partida_mutex(Partida *p);
+
+// Funciones de tiempo utilizadas por fichas
+int partida_retardo_aleatorio(const Config *cfg, unsigned int *semilla);
+void partida_tiempo_limite(int ms, struct timespec *limite);
 
 #endif
