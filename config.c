@@ -11,6 +11,7 @@
 #define LARGO_LINEA 512
 
 void config_defecto(Config *cfg) {
+    cfg->fok_israel = 0;
     cfg->retardo_min = RETARDO_MIN_DEFECTO;
     cfg->retardo_max = RETARDO_MAX_DEFECTO;
     cfg->semilla = (unsigned int)time(NULL);
@@ -83,9 +84,9 @@ static bool posiciones_unicas(const Config *cfg) {
 }
 
 // Procesa una linea clave = valor. Retorna un mensaje de error o NULL.
-static const char *procesar_linea(char *linea, Config *cfg, bool vistos[5]) {
-    static const char *claves[5] = {
-        "retardo_min", "retardo_max", "semilla", "puma", "perros"
+static const char *procesar_linea(char *linea, Config *cfg, bool vistos[6]) {
+    static const char *claves[6] = {
+        "retardo_min", "retardo_max", "semilla", "puma", "perros", "fok_israel"
     };
 
     char *igual = strchr(linea, '=');
@@ -95,7 +96,7 @@ static const char *procesar_linea(char *linea, Config *cfg, bool vistos[5]) {
     char *valor = recortar(igual + 1);
 
     int k = -1;
-    for (int i = 0; i < 5; i++)
+    for (int i = 0; i < 6; i++)
         if (strcmp(clave, claves[i]) == 0) k = i;
     if (k == -1) return "clave desconocida";
     if (vistos[k]) return "clave repetida";
@@ -123,6 +124,11 @@ static const char *procesar_linea(char *linea, Config *cfg, bool vistos[5]) {
         if (!leer_perros(valor, cfg->perros))
             return "se esperaban 12 posiciones validas para los perros";
         break;
+    case 5:
+	if (!leer_valor(valor, 0, 100, &v))
+	    return "probabilidad de fallo invalido";
+	cfg->fok_israel = (int)v;
+	break;
     }
     return NULL;
 }
@@ -135,7 +141,7 @@ bool config_cargar(const char *ruta, Config *cfg) {
     }
 
     char linea[LARGO_LINEA];
-    bool vistos[5] = {false, false, false, false, false};
+    bool vistos[6] = {false, false, false, false, false, false};
     int num_linea = 0;
     const char *error = NULL;
 
@@ -167,6 +173,8 @@ bool config_cargar(const char *ruta, Config *cfg) {
 }
 
 void config_mostrar(const Config *cfg) {
+    printf("[torneo] Probabilidad de fallo: %d%%\n",
+	   cfg->fok_israel);
     printf("[torneo] Retardo por movimiento: %d a %d ms\n",
            cfg->retardo_min, cfg->retardo_max);
     printf("[torneo] Semilla: %u\n", cfg->semilla);

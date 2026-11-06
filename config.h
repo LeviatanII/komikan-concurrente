@@ -13,6 +13,7 @@ typedef struct {
     int          retardo_min;          // retardo minimo por movimiento
     int          retardo_max;          // retardo maximo por movimiento
     unsigned int semilla;              // semilla aleatoria
+    int		 fok_israel;	       // probabilidad de fallo (0-100) ññññññ
     Pos          puma;                 // posicion inicial del puma
     Pos          perros[NUM_PERROS];   // posiciones iniciales de los perros
 } Config;
