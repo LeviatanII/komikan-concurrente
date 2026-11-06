@@ -10,6 +10,46 @@ const char *juez_texto_resultado(Resultado r) {
     }
 }
 
+// Busca la ficha que termino abruptamente.
+// Se llama con mutex_estadi tomado.
+
+static int buscar_falla(const Partida *p) {
+    for (int i = 0; i < NUM_FICHAS; i++) {
+	const Ficha *f = &p->fichas[i];
+
+	if (f->activa)
+	    continue;
+
+	// Un perro capturado termino normalmente.
+
+	if (f->id != ID_PUMA && !p->tablero.perro_vivo[f->id])
+	    continue;
+
+	return i;
+    }
+    return -1;
+}
+
+// Declara ganador al oponente del jugador que fallo.
+// Se llama con mutex_estado tomado.
+static void declarar_abandono(Partida *p, int ficha) {
+    bool fallo_puma = p->fichas[ficha].id == ID_PUMA;
+
+    p->abandono = true;
+
+    const char *jugador = fallo_puma ? "del puma" : "de los perros";
+
+    fprintf(p->registro,
+	"El juez detecta que el jugador %s fallo y aborta la partida\n",
+	jugador);
+
+    printf("[mesa %d] El jugador %s abandona la partida %d\n",
+	p->id_mesa, jugador, p->id_partida);
+
+    partida_anunciar_fin(p, fallo_puma ? GANA_PERROS : GANA_PUMA);
+}
+
+
 // Comprueba que el tablero sea consistente: un solo puma y cada perro en juego en la casilla que tiene registrada
 static bool estado_consistente(const Tablero *t) {
     int pumas = 0, perros = 0;
@@ -76,20 +116,43 @@ void *hilo_juez(void *arg) {
 
     // El juez duerme hasta que una ficha avisa un evento y entonces revisa el tablero
     int revisados = 0;
-    while (true) {
-        pthread_mutex_lock(&p.mutex_estado);
-        while (!p.terminada && p.eventos == revisados)
-            pthread_cond_wait(&p.cond_juez, &p.mutex_estado);
-        bool fin = p.terminada;
-        revisados = p.eventos;
-        pthread_mutex_unlock(&p.mutex_estado);
 
-        if (fin) break;
-        revisar_tablero(&p);
+    while (true) {
+	pthread_mutex_lock(&p.mutex_estado);
+
+	while (!p.terminada && p.eventos == revisados)
+	    pthread_cond_wait(&p.cond_juez, &p.mutex_estado);
+
+	if (!p.terminada) {
+	    int falla = buscar_falla(&p);
+
+		if (falla >= 0)
+		    declarar_abandono(&p, falla);
+	}
+	bool fin = p.terminada;
+	revisados = p.eventos;
+
+	pthread_mutex_unlock(&p.mutex_estado);
+
+	if (fin) break;
+
+	revisar_tablero(&p);
     }
 
     // Se espera a todas las fichas antes de liberar la mesa
     partida_esperar_fichas(&p, creados);
+
+    int retenidos = partida_mutex_retenidos(&p);
+
+    fprintf(p.registro, "Mutex retenidos al cerrar la mesa: %d\n", retenidos);
+
+    if (retenidos > 0) {
+	fprintf(stderr,
+		"[mesa %d] Quedaron %d mutex tomados en la partida %d\n",
+		d->id_mesa, retenidos, d->id_partida);
+
+}
+
 
     fprintf(p.registro, "Fin de la partida tras %d movimientos: %s\n",
             p.movimientos, juez_texto_resultado(p.resultado));

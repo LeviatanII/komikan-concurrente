@@ -55,11 +55,66 @@ void partida_anunciar_fin(Partida *p, Resultado r) {
     pthread_cond_signal(&p->cond_juez);
 }
 
+// Interrumpir ?? Palimpacta tocadora
+
+void partida_interrumpir(Partida *p) {
+    pthread_mutex_lock(&p->mutex_estado);
+
+    if (!p->terminada) {
+	p->interrumpida = true;
+	fprintf(p->registro, "Partida ABORTADA por la maria (servidor)\n");
+}
+
+     partida_anunciar_fin(p, SIN_GANADOR);
+
+     pthread_mutex_unlock(&p->mutex_estado);
+}
+
+
 // Avisa al juez que hay algo nuevo que revisar. Se llama con mutex_estado tomado
 static void avisar_juez(Partida *p) {
     p->eventos++;
     pthread_cond_signal(&p->cond_juez);
 }
+
+typedef struct {
+    Partida  *partida;
+    const int *zona;
+    int n;
+} ZonaTomada;
+
+static void limpiar_zona(void *arg) {
+    ZonaTomada *z = arg;
+    desbloquear_zona(z->partida, z->zona, z->n);
+}
+
+// Ñ
+static void limpiar_estado(void *arg) {
+    Partida *p = arg;
+    pthread_mutex_unlock(&p->mutex_estado);
+}
+
+// Marca la ficha como terminada y aviza al Zuniga que puso mal el nombre (Juez)
+static void marcar_fin_ficha(void *arg) {
+    Ficha *f = arg;
+    Partida *p = f->partida;
+
+    pthread_mutex_lock(&p->mutex_estado);
+    f->activa = false;
+    avisar_juez(p);
+    pthread_mutex_unlock(&p->mutex_estado);
+}
+
+// Simula a una persona jugando ping pong (fallo de fracasadito)
+
+static void simular_falla(Ficha *f, const char *nombre) {
+    fprintf(f->partida->registro,
+	"Falla interna de %s: su hilo termina abruptamente\n",
+	nombre);
+
+    pthread_exit(NULL);
+}
+
 
 // Indica si las fichas pueden seguir moviendose. Se llama con mutex_estado tomado
 static bool partida_activa(const Partida *p) {
@@ -117,16 +172,30 @@ static void *hilo_perro(void *arg) {
     char nombre[16];
     snprintf(nombre, sizeof(nombre), "perro %d", f->id);
 
+    pthread_cleanup_push(marcar_fin_ficha, f);
+
     while (esperar_retardo(p, &f->semilla)) {
+	f->ciclos++;
         // Solo este hilo modifica la posicion de su perro, por eso puede leerla antes de bloquear
         Pos origen = p->tablero.perros[f->id];
         int zona[FILAS * COLUMNAS];
         int n = calcular_zona(origen, 1, zona);
 
+	ZonaTomada tomada = {p, zona, n};
+	bool activa;
+	bool vivo;
+
         bloquear_zona(p, zona, n);
+	pthread_cleanup_push(limpiar_zona, &tomada);
+
         pthread_mutex_lock(&p->mutex_estado);
-        bool activa = partida_activa(p);
-        bool vivo = p->tablero.perro_vivo[f->id];
+	pthread_cleanup_push(limpiar_estado, p);
+
+	if (f->ciclos == f->falla_en)
+	   simular_falla(f, nombre);
+
+        activa = partida_activa(p);
+        vivo = p->tablero.perro_vivo[f->id];
         if (activa && vivo) {
             Pos destinos[MAX_VECINOS];
             int k = tablero_movimientos_perro(&p->tablero, f->id, destinos);
@@ -138,11 +207,12 @@ static void *hilo_perro(void *arg) {
                     registrar_rechazo(p, nombre, origen, destino);
             }
         }
-        pthread_mutex_unlock(&p->mutex_estado);
-        desbloquear_zona(p, zona, n);
+        pthread_cleanup_pop(1);
+        pthread_cleanup_pop(1);
 
         if (!activa || !vivo) break;   // termino la partida o el perro fue capturado
     }
+    pthread_cleanup_pop(1); // termina la ficha
     return NULL;
 }
 
@@ -150,15 +220,29 @@ static void *hilo_puma(void *arg) {
     Ficha *f = arg;
     Partida *p = f->partida;
 
+    pthread_cleanup_push(marcar_fin_ficha, f);
+
     while (esperar_retardo(p, &f->semilla)) {
-        // Solo este hilo modifica la posicion del puma, por eso puede leerla antes de bloquear
+	f->ciclos++;
+
+	// Solo este hilo modifica la posicion del puma, por eso puede leerla antes de bloquear
         Pos origen = p->tablero.puma;
         int zona[FILAS * COLUMNAS];
         int n = calcular_zona(origen, 2, zona);   // radio 2 para incluir los destinos de captura
 
+	ZonaTomada tomada = {p, zona, n};
+	bool activa;
+
         bloquear_zona(p, zona, n);
+	pthread_cleanup_push(limpiar_zona, &tomada);
+
         pthread_mutex_lock(&p->mutex_estado);
-        bool activa = partida_activa(p);
+	pthread_cleanup_push(limpiar_estado, p);
+
+	if (f->ciclos == f->falla_en)
+	    simular_falla(f, "puma");
+
+	activa = partida_activa(p);
         if (activa) {
             Pos destinos[MAX_VECINOS], capturas[MAX_VECINOS];
             int k = tablero_movimientos_puma(&p->tablero, destinos);
@@ -178,11 +262,12 @@ static void *hilo_puma(void *arg) {
                     registrar_rechazo(p, "puma", origen, destino);
             }
         }
-        pthread_mutex_unlock(&p->mutex_estado);
-        desbloquear_zona(p, zona, n);
+        pthread_cleanup_pop(1);
+	pthread_cleanup_pop(1);
 
         if (!activa) break;
     }
+    pthread_cleanup_pop(1);
     return NULL;
 }
 
@@ -227,13 +312,28 @@ void partida_destruir(Partida *p) {
 }
 
 int partida_crear_fichas(Partida *p) {
+
+    unsigned int semilla_fallo =
+	p->config->semilla + 7919u * (unsigned int)p->id_partida;
+
+    int ficha_falla = -1;
+    int ciclo_falla = -1;
+
+    if ((int)(rand_r(&semilla_fallo) % 100u) < p->config->fok_israel) {
+	ficha_falla = (int)(rand_r(&semilla_fallo) % NUM_FICHAS);
+	ciclo_falla = 1 + (int)(rand_r(&semilla_fallo) % 20u);
+}
+
     // La ficha 0 es el puma y las fichas 1 a 12 son los perros
     int creados = 0;
     for (int i = 0; i < NUM_FICHAS; i++) {
         p->fichas[i].partida = p;
         p->fichas[i].id = (i == 0) ? ID_PUMA : i - 1;
         p->fichas[i].semilla = p->config->semilla + 1000u * (unsigned int)p->id_partida + (unsigned int)i;
-        void *(*rutina)(void *) = (i == 0) ? hilo_puma : hilo_perro;
+        p->fichas[i].ciclos = 0;
+	p->fichas[i].falla_en = (i == ficha_falla) ? ciclo_falla : -1;
+	p->fichas[i].activa = true;
+	void *(*rutina)(void *) = (i == 0) ? hilo_puma : hilo_perro;
         int err = pthread_create(&p->hilos[i], NULL, rutina, &p->fichas[i]);
         if (err != 0) {
             fprintf(stderr, "[mesa %d] No se pudo crear un hilo: %s\n", p->id_mesa, strerror(err));
@@ -247,6 +347,25 @@ int partida_crear_fichas(Partida *p) {
 void partida_esperar_fichas(Partida *p, int creados) {
     for (int i = 0; i < creados; i++)
         pthread_join(p->hilos[i], NULL);
+}
+
+int partida_mutex_retenidos(Partida *p) {
+	int retenidos = 0;
+
+	for (int f = 0; f < FILAS; f++) {
+	    for (int c = 0; c < COLUMNAS; c++) {
+		if (pthread_mutex_trylock(&p->mutex_casilla[f][c]) == 0)
+		   (pthread_mutex_unlock(&p->mutex_casilla[f][c]));
+		else
+		    retenidos++;
+	    }
+	}
+	if (pthread_mutex_trylock(&p->mutex_estado) == 0)
+	    pthread_mutex_unlock(&p->mutex_estado);
+	else
+	    retenidos++;
+
+	return retenidos;
 }
 
 void partida_bloquear_todo(Partida *p) {
