@@ -13,3 +13,6 @@ semilla = 42
 # Filas 0 y 1: triangulo. Filas 2 a 6: cuadricula de 5 x 5.
 puma = 0,2
 perros = 5,0 5,1 5,2 5,3 5,4 6,0 6,1 6,2 6,3 6,4 4,0 4,4
+
+# Probabilidad de fallo de un jugador (0-100)
+fok_israel = 0
