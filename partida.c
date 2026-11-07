@@ -277,6 +277,8 @@ bool partida_inicializar(Partida *p, int id_mesa, int id_partida, const Config *
     p->config = cfg;
     p->terminada = false;
     p->resultado = SIN_GANADOR;
+    p->interrumpida = false;
+    p->abandono = false;
     p->movimientos = 0;
     p->eventos = 0;
     if (!tablero_inicializar(&p->tablero, cfg->puma, cfg->perros)) {
@@ -380,4 +382,24 @@ void partida_desbloquear_todo(Partida *p) {
     for (int f = FILAS - 1; f >= 0; f--)
         for (int c = COLUMNAS - 1; c >= 0; c--)
             pthread_mutex_unlock(&p->mutex_casilla[f][c]);
+}
+
+int partida_retardo_aleatorio(const Config *cfg, unsigned int *semilla) {
+    unsigned int rango =
+        (unsigned int)(cfg->retardo_max - cfg->retardo_min) + 1u;
+
+    return cfg->retardo_min +
+           (int)((unsigned int)rand_r(semilla) % rango);
+}
+
+void partida_tiempo_limite(int ms, struct timespec *limite) {
+    clock_gettime(CLOCK_REALTIME, limite);
+
+    limite->tv_sec += ms / 1000;
+    limite->tv_nsec += (long)(ms % 1000) * 1000000L;
+
+    if (limite->tv_nsec >= 1000000000L) {
+        limite->tv_sec++;
+        limite->tv_nsec -= 1000000000L;
+    }
 }

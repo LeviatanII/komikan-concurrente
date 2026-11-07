@@ -86,9 +86,6 @@ void partida_interrumpir(Partida *p);
 // Cuenta los mutex que esta bloqueados
 int partida_mutex_retenidos(Partida *p);
 
-// Contador de mutex que estan bloqueados despues de unir las hilachas
-int partida_mutex(Partida *p);
-
 // Funciones de tiempo utilizadas por fichas
 int partida_retardo_aleatorio(const Config *cfg, unsigned int *semilla);
 void partida_tiempo_limite(int ms, struct timespec *limite);
